@@ -1925,11 +1925,11 @@ def fig_risk_histogram(df: pd.DataFrame) -> go.Figure:
             colorscale=[[0,"#059669"],[0.33,"#2563eb"],[0.66,"#d97706"],[1,"#e03e3e"]],
             showscale=True,
             colorbar=dict(
-                title="Risk",
+                title=dict(text="Risk", font=dict(size=11)),   # ← changed
                 tickvals=[0,25,50,75,100],
                 ticktext=["0","25","50","75","100"],
                 thickness=12, len=0.8,
-                titlefont_size=11, tickfont_size=10,
+                tickfont=dict(size=10),                        # ← changed
             ),
         ),
         hovertemplate="Skor: %{x:.0f}<br>Kayıt: %{y:,}<extra></extra>",
