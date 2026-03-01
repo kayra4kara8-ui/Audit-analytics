@@ -39,6 +39,16 @@ import warnings
 import io
 import math
 import re
+try:
+    from docx import Document as DocxDocument
+    from docx.shared import Pt, RGBColor, Inches, Cm
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.enum.table import WD_ALIGN_VERTICAL
+    from docx.oxml.ns import qn
+    from docx.oxml import OxmlElement
+    DOCX_AVAILABLE = True
+except ImportError:
+    DOCX_AVAILABLE = False
 
 warnings.filterwarnings("ignore")
 
@@ -2598,6 +2608,280 @@ def build_export_excel(df: pd.DataFrame, findings: list,
     return buf.getvalue()
 
 
+def _docx_set_cell_bg(cell, hex_color: str):
+    """Tablo hücresine arka plan rengi ekler (python-docx yardımcı)."""
+    tc = cell._tc
+    tcPr = tc.get_or_add_tcPr()
+    shd = OxmlElement("w:shd")
+    shd.set(qn("w:val"), "clear")
+    shd.set(qn("w:color"), "auto")
+    shd.set(qn("w:fill"), hex_color)
+    tcPr.append(shd)
+
+
+def _docx_header_row(table, headers: list, bg: str = "1F3864", fg: str = "FFFFFF"):
+    """Tabloya koyu başlık satırı ekler."""
+    row = table.rows[0]
+    for i, h in enumerate(headers):
+        cell = row.cells[i]
+        cell.text = h
+        _docx_set_cell_bg(cell, bg)
+        run = cell.paragraphs[0].runs[0]
+        run.bold = True
+        run.font.color.rgb = RGBColor.from_string(fg)
+        run.font.size = Pt(9)
+        cell.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+
+def build_word_report(
+    dataset_name: str,
+    findings: list,
+    plans: list,
+    genel_risk: str,
+    verdict: str,
+    focus_areas: list,
+    tracking: dict | None = None,
+) -> bytes:
+    """
+    Profesyonel iç denetim Word raporu (.docx) oluşturur.
+
+    tracking: {bulgu_id_aksiyon_idx: {"durum": str, "gerceklesen": str}} sözlüğü
+    """
+    if not DOCX_AVAILABLE:
+        raise ImportError("python-docx kurulu değil. 'pip install python-docx' komutunu çalıştırın.")
+
+    doc = DocxDocument()
+
+    # ── Sayfa yapısı ──────────────────────────────────────────────────────────
+    section = doc.sections[0]
+    section.page_width  = Cm(21)
+    section.page_height = Cm(29.7)
+    section.left_margin   = Cm(2.5)
+    section.right_margin  = Cm(2.5)
+    section.top_margin    = Cm(2.5)
+    section.bottom_margin = Cm(2)
+
+    # ── Stilleri ayarla ───────────────────────────────────────────────────────
+    style_normal = doc.styles["Normal"]
+    style_normal.font.name = "Arial"
+    style_normal.font.size = Pt(10)
+
+    # ── KAPAK SAYFASI ─────────────────────────────────────────────────────────
+    doc.add_paragraph()
+    doc.add_paragraph()
+
+    title_p = doc.add_paragraph()
+    title_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    run = title_p.add_run("İÇ DENETİM ANALİTİK DEĞERLENDİRME RAPORU")
+    run.bold = True
+    run.font.size = Pt(20)
+    run.font.color.rgb = RGBColor(0x1F, 0x38, 0x64)
+
+    sub_p = doc.add_paragraph()
+    sub_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    run2 = sub_p.add_run("IIA IPPF · COSO 2013 · ISO 31000 Uyumlu")
+    run2.italic = True
+    run2.font.size = Pt(12)
+    run2.font.color.rgb = RGBColor(0x44, 0x44, 0x44)
+
+    doc.add_paragraph()
+
+    # Bilgi kutusu
+    info_tbl = doc.add_table(rows=4, cols=2)
+    info_tbl.style = "Table Grid"
+    info_data = [
+        ("Rapor Tarihi", datetime.now().strftime("%d %B %Y  %H:%M")),
+        ("Analiz Edilen Veri Seti", dataset_name or "Yüklenen Dosya"),
+        ("Genel Risk Seviyesi", genel_risk),
+        ("Rapor Türü", "Otomatik Veri Analitiği Raporu"),
+    ]
+    for i, (label, value) in enumerate(info_data):
+        c0 = info_tbl.cell(i, 0)
+        c1 = info_tbl.cell(i, 1)
+        c0.text = label
+        c1.text = str(value)
+        _docx_set_cell_bg(c0, "D6E4F0")
+        r0 = c0.paragraphs[0].runs[0]
+        r0.bold = True
+        r0.font.size = Pt(10)
+        c1.paragraphs[0].runs[0].font.size = Pt(10)
+
+    doc.add_page_break()
+
+    # ── YÖNETİCİ ÖZETİ ────────────────────────────────────────────────────────
+    h1 = doc.add_heading("1. Yönetici Özeti", level=1)
+    h1.runs[0].font.color.rgb = RGBColor(0x1F, 0x38, 0x64)
+
+    risk_p = doc.add_paragraph()
+    r = risk_p.add_run(f"Genel Risk Seviyesi: {genel_risk}")
+    r.bold = True
+    r.font.size = Pt(11)
+
+    doc.add_paragraph(verdict)
+
+    if focus_areas:
+        doc.add_paragraph("Öncelikli Aksiyon Alanları:", style="Normal").runs[0].bold = True
+        for i, area in enumerate(focus_areas, 1):
+            p = doc.add_paragraph(f"{i}. {area}")
+            p.paragraph_format.left_indent = Cm(1)
+
+    doc.add_paragraph()
+
+    # ── BULGULAR TABLOSU ──────────────────────────────────────────────────────
+    doc.add_heading("2. Denetim Bulguları", level=1).runs[0].font.color.rgb = RGBColor(0x1F, 0x38, 0x64)
+    doc.add_paragraph(f"Toplam {len(findings)} bulgu tespit edilmiştir.")
+
+    if findings:
+        f_cols = ["ID", "Başlık", "Risk Seviyesi", "Etkilenen Kayıt", "Kök Neden"]
+        f_tbl  = doc.add_table(rows=len(findings) + 1, cols=5)
+        f_tbl.style = "Table Grid"
+
+        # Sütun genişlikleri
+        col_widths = [Cm(2), Cm(5), Cm(2.5), Cm(2.5), Cm(5.5)]
+        for row in f_tbl.rows:
+            for j, w in enumerate(col_widths):
+                row.cells[j].width = w
+
+        _docx_header_row(f_tbl, f_cols)
+
+        risk_colors = {
+            "Kritik": "FFB3B3", "Yüksek": "FFE0B2",
+            "Orta":   "C5D8F6", "Düşük":  "C8F5DC",
+        }
+        for i, f in enumerate(findings, 1):
+            row = f_tbl.rows[i]
+            vals = [
+                f.get("id", ""),
+                f.get("baslik", ""),
+                f.get("risk", ""),
+                f"{f.get('etki', 0):,}",
+                f.get("kok_neden", "")[:200],
+            ]
+            bg = risk_colors.get(f.get("risk", ""), "FFFFFF")
+            for j, val in enumerate(vals):
+                cell = row.cells[j]
+                cell.text = str(val)
+                cell.paragraphs[0].runs[0].font.size = Pt(9)
+                if j == 2:  # Risk sütunu renklendir
+                    _docx_set_cell_bg(cell, bg)
+
+    doc.add_paragraph()
+    doc.add_page_break()
+
+    # ── AKSİYON PLANLARI TABLOSU ──────────────────────────────────────────────
+    doc.add_heading("3. Aksiyon Planları", level=1).runs[0].font.color.rgb = RGBColor(0x1F, 0x38, 0x64)
+    doc.add_paragraph(f"Toplam {len(plans)} aksiyon planı oluşturulmuştur.")
+
+    if plans:
+        a_cols = ["İlgili Bulgu ID", "Önerilen Aksiyon", "Sorumlu Birim", "Süre", "Öncelik"]
+        a_tbl  = doc.add_table(rows=len(plans) + 1, cols=5)
+        a_tbl.style = "Table Grid"
+        a_col_widths = [Cm(2.5), Cm(6), Cm(3), Cm(2), Cm(2)]
+        for row in a_tbl.rows:
+            for j, w in enumerate(a_col_widths):
+                row.cells[j].width = w
+
+        _docx_header_row(a_tbl, a_cols)
+
+        for i, p in enumerate(plans, 1):
+            row = a_tbl.rows[i]
+            vals = [
+                p.get("bulgu_id", ""),
+                p.get("aksiyon", "")[:250],
+                p.get("birim", ""),
+                p.get("sure", ""),
+                p.get("oncelik", ""),
+            ]
+            for j, val in enumerate(vals):
+                cell = row.cells[j]
+                cell.text = str(val)
+                cell.paragraphs[0].runs[0].font.size = Pt(9)
+
+    doc.add_paragraph()
+    doc.add_page_break()
+
+    # ── TAKİP DURUMU TABLOSU ──────────────────────────────────────────────────
+    doc.add_heading("4. Aksiyon Takip Tablosu", level=1).runs[0].font.color.rgb = RGBColor(0x1F, 0x38, 0x64)
+    doc.add_paragraph(
+        "Bu tablo, aksiyon planlarının uygulanma durumunu takip etmek amacıyla "
+        "hazırlanmıştır. 'Durum' ve 'Gerçekleşen Kapanış Tarihi' sütunları, "
+        "sorumlu birimler tarafından doldurulacaktır."
+    )
+
+    if plans:
+        t_cols = ["Bulgu ID", "Aksiyon", "Sorumlu", "Planlanan Kapanış", "Durum", "Gerçekleşen Kapanış"]
+        t_tbl  = doc.add_table(rows=len(plans) + 1, cols=6)
+        t_tbl.style = "Table Grid"
+        t_col_widths = [Cm(2), Cm(5), Cm(2.5), Cm(2.5), Cm(2.5), Cm(2.5)]
+        for row in t_tbl.rows:
+            for j, w in enumerate(t_col_widths):
+                row.cells[j].width = w
+
+        _docx_header_row(t_tbl, t_cols)
+
+        for i, p in enumerate(plans, 1):
+            trk_key = f"{p.get('bulgu_id','')}__{i-1}"
+            trk = (tracking or {}).get(trk_key, {})
+            row = t_tbl.rows[i]
+            vals = [
+                p.get("bulgu_id", ""),
+                p.get("aksiyon", "")[:150],
+                p.get("birim", ""),
+                p.get("sure", ""),
+                trk.get("durum", "Açık"),
+                trk.get("gerceklesen", ""),
+            ]
+            for j, val in enumerate(vals):
+                cell = row.cells[j]
+                cell.text = str(val)
+                cell.paragraphs[0].runs[0].font.size = Pt(9)
+                # Durum sütunu renklendirme
+                if j == 4:
+                    durum_bg = {"Kapalı": "C8F5DC", "Devam Ediyor": "FFE0B2", "Açık": "FFB3B3"}.get(val, "FFFFFF")
+                    _docx_set_cell_bg(cell, durum_bg)
+
+    # ── İMZA SAYFASI ──────────────────────────────────────────────────────────
+    doc.add_page_break()
+    doc.add_heading("5. Onay ve İmza", level=1).runs[0].font.color.rgb = RGBColor(0x1F, 0x38, 0x64)
+    doc.add_paragraph(
+        "Bu rapor, otomatik veri analitiği yöntemleriyle üretilmiş olup sorumlu "
+        "iç denetçi tarafından gözden geçirilmeli ve onaylanmalıdır."
+    )
+    doc.add_paragraph()
+
+    sign_tbl = doc.add_table(rows=3, cols=3)
+    sign_tbl.style = "Table Grid"
+    sign_headers = ["Hazırlayan (İç Denetçi)", "Onaylayan (Denetim Müdürü)", "Kabul Eden (Yönetim)"]
+    for j, h in enumerate(sign_headers):
+        _docx_set_cell_bg(sign_tbl.cell(0, j), "1F3864")
+        sign_tbl.cell(0, j).text = h
+        r = sign_tbl.cell(0, j).paragraphs[0].runs[0]
+        r.bold = True
+        r.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
+        r.font.size = Pt(9)
+
+    for j in range(3):
+        sign_tbl.cell(1, j).text = "Ad Soyad:\n\nİmza:"
+        sign_tbl.cell(1, j).paragraphs[0].runs[0].font.size = Pt(9)
+        sign_tbl.cell(2, j).text = f"Tarih: {datetime.now().strftime('%d/%m/%Y')}"
+        sign_tbl.cell(2, j).paragraphs[0].runs[0].font.size = Pt(9)
+
+    doc.add_paragraph()
+    footer_p = doc.add_paragraph(
+        "Bu rapor IIA Uluslararası İç Denetim Standartları (IPPF), COSO 2013 ve ISO 31000 "
+        "çerçevesinde otomatik analitik yöntemlerle üretilmiştir. Bulgular ön değerlendirme "
+        "niteliğindedir; son karar yetkisi sorumlu iç denetçiye aittir."
+    )
+    footer_p.runs[0].italic = True
+    footer_p.runs[0].font.size = Pt(8)
+    footer_p.runs[0].font.color.rgb = RGBColor(0x80, 0x80, 0x80)
+
+    # ── Buffer'a yaz ──────────────────────────────────────────────────────────
+    buf = io.BytesIO()
+    doc.save(buf)
+    return buf.getvalue()
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # M14 – SIDEBAR & FİLTRELER
 # ══════════════════════════════════════════════════════════════════════════════
@@ -3381,10 +3665,20 @@ def main() -> None:
                 "P1 – Acil":"p1","P2 – Yüksek":"p2","P3 – Orta":"p3","P4 – Düşük":"p4"
             }
 
-            for p in plans:
+            # ── Takip durumu session_state başlat ──
+            if "action_tracking" not in st.session_state:
+                st.session_state["action_tracking"] = {}
+
+            for idx, p in enumerate(plans):
                 icon = risk_emoji(p["risk"])
                 pcss = prio_css_map.get(p["oncelik"],"p3")
                 rcss = css_class(p["risk"])
+                trk_key = f"{p.get('bulgu_id','')}__{idx}"
+                if trk_key not in st.session_state["action_tracking"]:
+                    st.session_state["action_tracking"][trk_key] = {
+                        "durum": "Açık", "gerceklesen": ""
+                    }
+
                 with st.expander(
                     f"{icon}  [{p['bulgu_id']}]  {p['bulgu'][:80]}  [{p['oncelik']}]",
                     expanded=("P1" in p["oncelik"])
@@ -3400,11 +3694,87 @@ def main() -> None:
                     with col_a4:
                         st.markdown(f"**📚 Standart Referans**\n\n{p['standart']}")
 
+                    # ── TAKİP FORMU ──────────────────────────────────────────
+                    st.markdown("---")
+                    st.markdown("**📋 Aksiyon Takibi**")
+                    col_t1, col_t2 = st.columns(2)
+                    with col_t1:
+                        yeni_durum = st.selectbox(
+                            "Durum",
+                            ["Açık", "Devam Ediyor", "Kapalı"],
+                            index=["Açık", "Devam Ediyor", "Kapalı"].index(
+                                st.session_state["action_tracking"][trk_key]["durum"]
+                            ),
+                            key=f"durum_{trk_key}",
+                        )
+                        st.session_state["action_tracking"][trk_key]["durum"] = yeni_durum
+                    with col_t2:
+                        mevcut_gc = st.session_state["action_tracking"][trk_key].get("gerceklesen", "")
+                        try:
+                            gc_date_val = (
+                                datetime.strptime(mevcut_gc, "%Y-%m-%d").date()
+                                if mevcut_gc else datetime.now().date()
+                            )
+                        except Exception:
+                            gc_date_val = datetime.now().date()
+                        gerceklesen = st.date_input(
+                            "Gerçekleşen Kapanış Tarihi",
+                            value=gc_date_val,
+                            key=f"gc_{trk_key}",
+                        )
+                        # Kapalı durumda tarihi kaydet, aksi halde boş bırak
+                        if yeni_durum == "Kapalı":
+                            st.session_state["action_tracking"][trk_key]["gerceklesen"] = str(gerceklesen)
+                        else:
+                            st.session_state["action_tracking"][trk_key]["gerceklesen"] = ""
+
+            # ── Takip Özet Tablosu ────────────────────────────────────────────
+            st.markdown("---")
+            st.markdown("#### 📊 Aksiyon Takip Özeti")
+            trk = st.session_state.get("action_tracking", {})
+            acik     = sum(1 for v in trk.values() if v["durum"] == "Açık")
+            devam    = sum(1 for v in trk.values() if v["durum"] == "Devam Ediyor")
+            kapali   = sum(1 for v in trk.values() if v["durum"] == "Kapalı")
+            col_ov1, col_ov2, col_ov3 = st.columns(3)
+            col_ov1.metric("🔴 Açık", acik)
+            col_ov2.metric("🟡 Devam Ediyor", devam)
+            col_ov3.metric("🟢 Kapalı", kapali)
+
+            if trk:
+                summary_rows = []
+                for idx2, p2 in enumerate(plans):
+                    k = f"{p2.get('bulgu_id','')}__{idx2}"
+                    tv = trk.get(k, {})
+                    summary_rows.append({
+                        "Bulgu ID": p2.get("bulgu_id",""),
+                        "Aksiyon (Özet)": p2.get("aksiyon","")[:80],
+                        "Sorumlu": p2.get("birim",""),
+                        "Planlanan Süre": p2.get("sure",""),
+                        "Durum": tv.get("durum","Açık"),
+                        "Gerçekleşen Kapanış": tv.get("gerceklesen",""),
+                    })
+                st.dataframe(pd.DataFrame(summary_rows), use_container_width=True)
+
     # ══════════════════════════════════════════════════════
     # TAB 7 – YÖNETİCİ ÖZETİ
     # ══════════════════════════════════════════════════════
     with t_exec:
         render_executive_summary(df_f, col_map, findings, scenarios, quality, plans)
+
+        # ── Aksiyon Takip Özeti (Yönetici Özeti'nde) ──
+        trk = st.session_state.get("action_tracking", {})
+        if trk or plans:
+            st.markdown("---")
+            st.markdown("#### 📌 Aksiyon Takip Durumu")
+            acik_n  = sum(1 for v in trk.values() if v["durum"] == "Açık")
+            devam_n = sum(1 for v in trk.values() if v["durum"] == "Devam Ediyor")
+            kapali_n= sum(1 for v in trk.values() if v["durum"] == "Kapalı")
+            tamamlanma = int(kapali_n / len(plans) * 100) if plans else 0
+            c_t1, c_t2, c_t3, c_t4 = st.columns(4)
+            c_t1.metric("🔴 Açık Aksiyon",    acik_n)
+            c_t2.metric("🟡 Devam Ediyor",     devam_n)
+            c_t3.metric("🟢 Kapalı Aksiyon",   kapali_n)
+            c_t4.metric("✅ Tamamlanma Oranı", f"%{tamamlanma}")
 
         # ── Excel Export ──
         st.markdown("---")
@@ -3419,6 +3789,60 @@ def main() -> None:
             )
         except Exception as e:
             st.warning(f"Excel export hazırlanamadı: {e}")
+
+        # ── Word Export ──
+        st.markdown("**📄 Profesyonel Word Raporu**")
+        if DOCX_AVAILABLE:
+            try:
+                # Yönetici özeti verilerini hesapla (M12 ile aynı mantık)
+                score_col = "risk_score" if "risk_score" in df_f.columns else None
+                avg_s_w = df_f[score_col].mean() if score_col else 0
+                total_w  = len(df_f)
+                crit_n_w = len([f for f in findings if f["risk"] == "Kritik"])
+                high_n_w = len([f for f in findings if f["risk"] == "Yüksek"])
+                if avg_s_w >= 55 or crit_n_w / (total_w or 1) > .35:
+                    genel_risk_w = "KRİTİK"
+                    verdict_w = "Analiz sonuçları kritik düzeyde iç kontrol zafiyeti ortaya koymaktadır."
+                elif avg_s_w >= 40 or (crit_n_w + high_n_w) / (total_w or 1) > .25:
+                    genel_risk_w = "YÜKSEK"
+                    verdict_w = "Önemli kontrol zafiyetleri tespit edilmiştir. Öncelikli aksiyon gereklidir."
+                elif avg_s_w >= 25:
+                    genel_risk_w = "ORTA"
+                    verdict_w = "Belirli süreç alanlarında kontrol iyileştirme ihtiyacı bulunmaktadır."
+                else:
+                    genel_risk_w = "DÜŞÜK"
+                    verdict_w = "Kontrol ortamı makul düzeyde bütünlük sergilemektedir."
+
+                sc_text_w = " ".join(s["senaryo"].lower() for s in scenarios)
+                q_text_w  = " ".join(q["kontrol"].lower() for q in quality)
+                combined_w = sc_text_w + " " + q_text_w
+                focus_w = []
+                if "eşik" in combined_w: focus_w.append("Tutar onay limitleri ve eşik yönetim politikası revizyonu")
+                if "yoğunlaşma" in combined_w: focus_w.append("Tedarikçi çeşitlendirme ve yoğunlaşma riski yönetimi")
+                if "sod" in combined_w: focus_w.append("Görevler ayrılığı matrisinin tam revizyonu")
+                if "mesai" in combined_w or "hafta" in combined_w: focus_w.append("Erişim kontrolü güçlendirmesi")
+                if not focus_w: focus_w = ["Veri kalite yönetim süreçlerinin güçlendirilmesi"]
+
+                dataset_name = getattr(uploaded, "name", "Demo Verisi") if uploaded else "Demo Verisi"
+                word_bytes = build_word_report(
+                    dataset_name=dataset_name,
+                    findings=findings,
+                    plans=plans,
+                    genel_risk=genel_risk_w,
+                    verdict=verdict_w,
+                    focus_areas=focus_w,
+                    tracking=st.session_state.get("action_tracking", {}),
+                )
+                st.download_button(
+                    "📄 Tam Raporu Word Olarak İndir (.docx)",
+                    data=word_bytes,
+                    file_name=f"ic_denetim_raporu_{datetime.now().strftime('%Y%m%d_%H%M')}.docx",
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                )
+            except Exception as e:
+                st.warning(f"Word raporu hazırlanamadı: {e}")
+        else:
+            st.info("Word raporu için: `pip install python-docx`")
 
 
 # ─── Giriş Noktası ────────────────────────────────────────────────────────────
