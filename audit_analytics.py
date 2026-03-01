@@ -2883,6 +2883,687 @@ def build_word_report(
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# M16 – GRC (GOVERNANCE, RISK & COMPLIANCE) KONTROL MATRİSİ
+# ══════════════════════════════════════════════════════════════════════════════
+# İlandan: "GRC araçlarını yöneterek erişim kontrollerini sağlamak ve
+#            mevzuat uyumunu sürekli izlemek"
+# ─────────────────────────────────────────────────────────────────────────────
+
+_GRC_CONTROLS = [
+    # id, alan, kontrol, standart, test_fn
+    {
+        "id": "GRC-01",
+        "alan": "Erişim Kontrolü",
+        "kontrol": "Görevler Ayrılığı (SoD) İhlali",
+        "standart": "COSO 2013 – CC8.1 / IIA PA 2320",
+        "aciklama": "Aynı kullanıcı hem işlem girişi hem onayı yapamaz.",
+    },
+    {
+        "id": "GRC-02",
+        "alan": "Erişim Kontrolü",
+        "kontrol": "Mesai Dışı & Hafta Sonu Erişimi",
+        "standart": "ISO 27001 – A.9.4 / COBIT DSS05",
+        "aciklama": "Normal çalışma saatleri dışında gerçekleşen sistem erişimi izlenmelidir.",
+    },
+    {
+        "id": "GRC-03",
+        "alan": "Finansal Uyum",
+        "kontrol": "Eşik Altı Yapılandırma (Structuring)",
+        "standart": "FATF Öneri 7 / AML Mevzuatı",
+        "aciklama": "Onay limitinin hemen altında birden fazla ardışık işlem finansal suç riskini artırır.",
+    },
+    {
+        "id": "GRC-04",
+        "alan": "Finansal Uyum",
+        "kontrol": "Benford Yasası Sapması",
+        "standart": "ACFE – Sahtecilik Önleme Rehberi",
+        "aciklama": "Finansal verilerin doğal dağılımdan sapması; veri manipülasyonuna işaret edebilir.",
+    },
+    {
+        "id": "GRC-05",
+        "alan": "Veri Bütünlüğü",
+        "kontrol": "Mükerrer Belge / Çift Ödeme Riski",
+        "standart": "COSO 2013 – CC7.2 / IIA Std. 2130",
+        "aciklama": "Aynı belge numarası veya aynı içerik birden fazla kez kaydedilmiş olabilir.",
+    },
+    {
+        "id": "GRC-06",
+        "alan": "Veri Bütünlüğü",
+        "kontrol": "Eksik / Boş Kritik Alan",
+        "standart": "GDPR Madde 5 / KVKK Md. 4",
+        "aciklama": "Zorunlu alanların boş bırakılması veri kalitesini ve yasal uyumu etkiler.",
+    },
+    {
+        "id": "GRC-07",
+        "alan": "Tedarikçi Uyumu",
+        "kontrol": "Tedarikçi Yoğunlaşması (Pareto)",
+        "standart": "Kamu İhale Kanunu / Şirket Satınalma Politikası",
+        "aciklama": "Az sayıda tedarikçiye aşırı bağımlılık rekabet eksikliğine ve suistimal riskine yol açar.",
+    },
+    {
+        "id": "GRC-08",
+        "alan": "Operasyonel Uyum",
+        "kontrol": "Negatif / Sıfır Tutar Kayıtları",
+        "standart": "COSO 2013 – CC4.1 / Vergi Mevzuatı",
+        "aciklama": "Mantıksal olarak geçersiz tutar değerleri; kötü amaçlı kayıt veya sistem hatasına işaret edebilir.",
+    },
+]
+
+
+def run_grc_assessment(findings: list, scenarios: list, quality: list, df: pd.DataFrame) -> list[dict]:
+    """
+    Bulgular, senaryolar ve kalite testlerini GRC kontrol çerçevesiyle eşleştirir;
+    her kontrol için Risk / Uyum Durumu / Kanıt sayısı döndürür.
+    """
+    keyword_map = {
+        "GRC-01": ["sod", "görevler", "ayrılık"],
+        "GRC-02": ["mesai", "hafta sonu", "hafta_sonu", "erişim"],
+        "GRC-03": ["eşik", "structuring", "yapılandırma"],
+        "GRC-04": ["benford", "bf-01"],
+        "GRC-05": ["mükerrer", "çift", "duplicate"],
+        "GRC-06": ["eksik", "boş", "missing"],
+        "GRC-07": ["pareto", "yoğunlaşma", "pa-01"],
+        "GRC-08": ["negatif", "sıfır", "zero"],
+    }
+
+    all_texts = (
+        [f["id"].lower() + " " + f["baslik"].lower() for f in findings]
+        + [s["id"].lower() + " " + s["senaryo"].lower() for s in scenarios]
+        + [q["id"].lower() + " " + q["kontrol"].lower() for q in quality]
+    )
+
+    results = []
+    for ctrl in _GRC_CONTROLS:
+        kws = keyword_map.get(ctrl["id"], [])
+        kanit_sayisi = sum(
+            1 for t in all_texts if any(kw in t for kw in kws)
+        )
+
+        # Risk seviyesi: ilgili bulgulardan miras al
+        related_risks = []
+        for f in findings:
+            txt = f["id"].lower() + f["baslik"].lower()
+            if any(kw in txt for kw in kws):
+                related_risks.append(f["risk"])
+        for s in scenarios:
+            txt = s["id"].lower() + s["senaryo"].lower()
+            if any(kw in txt for kw in kws):
+                related_risks.append(s["risk"])
+
+        prio = {"Kritik": 0, "Yüksek": 1, "Orta": 2, "Düşük": 3}
+        if related_risks:
+            risk = min(related_risks, key=lambda r: prio.get(r, 4))
+            durum = "❌ Uyumsuz" if risk in ("Kritik", "Yüksek") else "⚠️ Kısmen Uyumlu"
+        elif kanit_sayisi == 0:
+            risk = "Düşük"
+            durum = "✅ Uyumlu"
+        else:
+            risk = "Orta"
+            durum = "⚠️ Kısmen Uyumlu"
+
+        results.append({
+            **ctrl,
+            "risk":         risk,
+            "durum":        durum,
+            "kanit_sayisi": kanit_sayisi,
+        })
+
+    return results
+
+
+def render_grc_tab(grc_results: list, findings: list, df: pd.DataFrame):
+    """GRC sekmesini render eder."""
+    st.markdown("""
+    <div class="sec-header">
+      <div class="sec-icon">🛡️</div>
+      <div>
+        <div class="sec-title">GRC – Governance, Risk & Compliance</div>
+        <div class="sec-subtitle">Erişim kontrolü · Mevzuat uyumu · Kontrol matrisi · Sürekli izleme</div>
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # ── Özet KPI ──────────────────────────────────────────────────────────────
+    uyumsuz = sum(1 for g in grc_results if "Uyumsuz" in g["durum"])
+    kismi   = sum(1 for g in grc_results if "Kısmen"  in g["durum"])
+    uyumlu  = sum(1 for g in grc_results if g["durum"] == "✅ Uyumlu")
+    uyum_pct = int(uyumlu / len(grc_results) * 100) if grc_results else 0
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("🛡️ Toplam Kontrol",   len(grc_results))
+    c2.metric("❌ Uyumsuz",           uyumsuz, delta=f"-{uyumsuz}" if uyumsuz else None,
+              delta_color="inverse")
+    c3.metric("⚠️ Kısmen Uyumlu",     kismi)
+    c4.metric("✅ Uyum Oranı",        f"%{uyum_pct}")
+
+    st.divider()
+
+    # ── Kontrol Matrisi Tablosu ───────────────────────────────────────────────
+    st.markdown("#### 📋 GRC Kontrol Matrisi")
+    grc_df = pd.DataFrame([{
+        "ID":           g["id"],
+        "Alan":         g["alan"],
+        "Kontrol":      g["kontrol"],
+        "Risk":         g["risk"],
+        "Uyum Durumu":  g["durum"],
+        "Kanıt Sayısı": g["kanit_sayisi"],
+        "Standart":     g["standart"],
+    } for g in grc_results])
+    st.dataframe(grc_df, use_container_width=True, hide_index=True)
+
+    st.divider()
+
+    # ── Alan Bazlı Uyum Özeti ─────────────────────────────────────────────────
+    st.markdown("#### 📊 Alan Bazlı Uyum Dağılımı")
+    alan_grp = {}
+    for g in grc_results:
+        alan = g["alan"]
+        alan_grp.setdefault(alan, {"Uyumlu": 0, "Kısmen": 0, "Uyumsuz": 0})
+        if "Uyumsuz" in g["durum"]:   alan_grp[alan]["Uyumsuz"] += 1
+        elif "Kısmen"  in g["durum"]: alan_grp[alan]["Kısmen"]  += 1
+        else:                          alan_grp[alan]["Uyumlu"]  += 1
+
+    alan_df = pd.DataFrame([
+        {"Alan": a, **v} for a, v in alan_grp.items()
+    ])
+    fig_grc = go.Figure()
+    for col_name, color in [("Uyumsuz","#e03e3e"), ("Kısmen","#d97706"), ("Uyumlu","#059669")]:
+        fig_grc.add_trace(go.Bar(
+            name=col_name, x=alan_df["Alan"], y=alan_df[col_name],
+            marker_color=color,
+        ))
+    fig_grc.update_layout(
+        **PLOT_LAYOUT,
+        barmode="stack",
+        title="Alan Bazlı GRC Uyum Durumu",
+        height=350,
+    )
+    st.plotly_chart(fig_grc, use_container_width=True)
+
+    st.divider()
+
+    # ── Kontrol Detay Kartları ────────────────────────────────────────────────
+    st.markdown("#### 🔍 Kontrol Detayları")
+    for g in grc_results:
+        css = css_class(g["risk"])
+        exp_label = f"{g['durum']}  [{g['id']}]  {g['kontrol']}  — Risk: {g['risk']}"
+        with st.expander(exp_label, expanded=("Uyumsuz" in g["durum"])):
+            col_d1, col_d2 = st.columns([3, 1])
+            with col_d1:
+                st.markdown(f"**📌 Kontrol Amacı:** {g['aciklama']}")
+                st.markdown(f"**📚 Standart Referans:** `{g['standart']}`")
+                st.markdown(f"**🏷 Alan:** {g['alan']}")
+            with col_d2:
+                st.markdown(f"""
+                <div class="stat-grid">
+                  <div class="stat-item">
+                    <div class="stat-label">Risk</div>
+                    <div class="stat-value"><span class="rbadge {css}">{g['risk']}</span></div>
+                  </div>
+                  <div class="stat-item">
+                    <div class="stat-label">Kanıt</div>
+                    <div class="stat-value">{g['kanit_sayisi']}</div>
+                  </div>
+                </div>
+                """, unsafe_allow_html=True)
+
+            # İlgili bulgular
+            ilgili = [f for f in findings
+                      if any(kw in (f["id"] + f["baslik"]).lower()
+                             for kw in ["sod","mesai","eşik","benford","mükerrer","eksik","pareto","negatif"]
+                             if kw in g["kontrol"].lower() or kw in g["id"].lower())]
+            if g["kanit_sayisi"] > 0:
+                st.markdown(f"**⚠️ Tespit Edilen Kanıt Sayısı:** `{g['kanit_sayisi']}` ilgili bulgu/senaryo")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# M17 – OPERASYONELVERİMLİLİK DEĞERLENDİRMESİ
+# ══════════════════════════════════════════════════════════════════════════════
+# İlandan: "İş süreçleri üzerindeki kontrolleri, operasyonel verimlilik ve
+#            etkinliği … değerlendirmek"
+# ─────────────────────────────────────────────────────────────────────────────
+
+def compute_operational_efficiency(df: pd.DataFrame, col_map: dict,
+                                   quality: list, scenarios: list) -> dict:
+    """
+    Veri setinden operasyonel verimlilik göstergelerini hesaplar.
+    Returns: dict of efficiency metrics.
+    """
+    result: dict = {}
+    total = len(df)
+    if total == 0:
+        return result
+
+    # 1. Veri Kalite Skoru (0-100)
+    eksik_pct    = df.isnull().sum().sum() / (total * len(df.columns)) * 100
+    mukerrer_pct = df.duplicated().sum()   / total * 100
+    kalite_skoru = max(0, round(100 - eksik_pct * 2 - mukerrer_pct * 3, 1))
+    result["kalite_skoru"] = kalite_skoru
+
+    # 2. Onay Oran Analizi (varsa)
+    if "status" in col_map:
+        s_col = col_map["status"]
+        try:
+            counts = df[s_col].astype(str).str.lower().value_counts()
+            onaylandi = counts.get("onaylandı", 0) + counts.get("approved", 0)
+            reddedildi = counts.get("reddedildi", 0) + counts.get("rejected", 0)
+            bekleyen = counts.get("beklemede", 0) + counts.get("pending", 0)
+            result["onay_orani"] = round(onaylandi / max(total, 1) * 100, 1)
+            result["red_orani"]  = round(reddedildi / max(total, 1) * 100, 1)
+            result["bekleyen"]   = int(bekleyen)
+            result["onaylandi"]  = int(onaylandi)
+        except Exception:
+            pass
+
+    # 3. İşlem Yoğunluğu (varsa tarih)
+    if "date" in col_map:
+        try:
+            df2 = _parse_dates_safe(df, col_map["date"])
+            date_s = df2[col_map["date"]].dropna()
+            if len(date_s) > 1:
+                gun_arasi = (date_s.max() - date_s.min()).days or 1
+                result["gunluk_islem"] = round(total / gun_arasi, 1)
+                # Hafta sonu işlem oranı
+                hs_pct = (date_s.dt.dayofweek >= 5).mean() * 100
+                result["haftasonu_pct"] = round(hs_pct, 1)
+                # Mesai dışı oranı
+                mesai_pct = ((date_s.dt.hour < 8) | (date_s.dt.hour >= 18)).mean() * 100
+                result["mesai_disi_pct"] = round(mesai_pct, 1)
+        except Exception:
+            pass
+
+    # 4. Kontrol Etkinlik Skoru
+    # Her kritik senaryo/kalite bulgusu skoru düşürür
+    kritik_n = sum(1 for q in quality   if q["risk"] == "Kritik")
+    yuksek_n = sum(1 for q in quality   if q["risk"] == "Yüksek")
+    kritik_n += sum(1 for s in scenarios if s["risk"] == "Kritik")
+    yuksek_n += sum(1 for s in scenarios if s["risk"] == "Yüksek")
+    kontrol_skoru = max(0, round(100 - kritik_n * 15 - yuksek_n * 7, 1))
+    result["kontrol_skoru"] = kontrol_skoru
+
+    # 5. Genel Verimlilik Endeksi (0-100)
+    comp = [kalite_skoru, kontrol_skoru]
+    result["verimlilik_endeksi"] = round(sum(comp) / len(comp), 1)
+
+    # 6. Tutar bazlı istatistikler (varsa)
+    if "amount" in col_map:
+        try:
+            amt = _to_numeric_safe(df, col_map["amount"]).dropna()
+            result["ort_tutar"]  = float(amt.mean())
+            result["toplam_tutar"] = float(amt.sum())
+            result["std_tutar"]  = float(amt.std())
+            result["cv_tutar"]   = round(amt.std() / amt.mean() * 100, 1) if amt.mean() != 0 else 0
+        except Exception:
+            pass
+
+    return result
+
+
+def render_efficiency_tab(eff: dict, df: pd.DataFrame, col_map: dict):
+    """Operasyonel Verimlilik sekmesini render eder."""
+    st.markdown("""
+    <div class="sec-header">
+      <div class="sec-icon">⚙️</div>
+      <div>
+        <div class="sec-title">Operasyonel Verimlilik Değerlendirmesi</div>
+        <div class="sec-subtitle">Süreç etkinliği · Kontrol skoru · İşlem kalitesi · Anomali yoğunluğu</div>
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    if not eff:
+        st.info("Yeterli veri bulunamadı.")
+        return
+
+    # ── Ana Göstergeler ───────────────────────────────────────────────────────
+    c1, c2, c3 = st.columns(3)
+    vi = eff.get("verimlilik_endeksi", 0)
+    vi_delta = "İyi" if vi >= 70 else ("Orta" if vi >= 50 else "Düşük")
+    c1.metric("📊 Genel Verimlilik Endeksi", f"{vi}/100",
+              delta=vi_delta, delta_color="normal" if vi >= 70 else "inverse")
+    c2.metric("🧪 Veri Kalite Skoru",        f"{eff.get('kalite_skoru',0)}/100")
+    c3.metric("🛡️ Kontrol Etkinlik Skoru",   f"{eff.get('kontrol_skoru',0)}/100")
+
+    st.divider()
+
+    # ── Gauge Grafikleri ──────────────────────────────────────────────────────
+    col_g1, col_g2, col_g3 = st.columns(3)
+    gauge_items = [
+        (col_g1, "Verimlilik Endeksi", vi),
+        (col_g2, "Veri Kalitesi",      eff.get("kalite_skoru", 0)),
+        (col_g3, "Kontrol Etkinliği",  eff.get("kontrol_skoru", 0)),
+    ]
+    for col, label, val in gauge_items:
+        color = "#059669" if val >= 70 else ("#d97706" if val >= 50 else "#e03e3e")
+        fig = go.Figure(go.Indicator(
+            mode="gauge+number",
+            value=val,
+            title={"text": label, "font": {"color": "#8aa4be", "size": 13}},
+            gauge={
+                "axis": {"range": [0, 100], "tickcolor": "#4a6480"},
+                "bar":  {"color": color},
+                "bgcolor": "#111e30",
+                "steps": [
+                    {"range": [0,  50], "color": "rgba(224,62,62,0.12)"},
+                    {"range": [50, 70], "color": "rgba(217,119,6,0.12)"},
+                    {"range": [70,100], "color": "rgba(5,150,105,0.12)"},
+                ],
+                "threshold": {"line": {"color": "#ffffff", "width": 2}, "value": val},
+            },
+            number={"suffix": "/100", "font": {"color": color, "size": 28}},
+        ))
+        fig.update_layout(**{**PLOT_LAYOUT, "height": 220, "margin": dict(l=20,r=20,t=40,b=10)})
+        col.plotly_chart(fig, use_container_width=True)
+
+    st.divider()
+
+    # ── Onay Süreci Analizi ───────────────────────────────────────────────────
+    if "onay_orani" in eff:
+        st.markdown("#### 📋 Onay Süreci Analizi")
+        oc1, oc2, oc3 = st.columns(3)
+        oc1.metric("✅ Onay Oranı",    f"%{eff['onay_orani']}")
+        oc2.metric("❌ Red Oranı",     f"%{eff['red_orani']}")
+        oc3.metric("⏳ Bekleyen",      f"{eff.get('bekleyen',0):,} kayıt")
+
+        fig_onay = go.Figure(go.Pie(
+            labels=["Onaylandı", "Reddedildi", "Beklemede"],
+            values=[
+                eff.get("onaylandi", 0),
+                int(len(df) * eff["red_orani"] / 100),
+                eff.get("bekleyen", 0),
+            ],
+            marker_colors=["#059669", "#e03e3e", "#d97706"],
+            hole=0.55,
+            textinfo="label+percent",
+        ))
+        fig_onay.update_layout(**{**PLOT_LAYOUT, "height": 300,
+                                  "title": "Onay Durumu Dağılımı"})
+        st.plotly_chart(fig_onay, use_container_width=True)
+        st.divider()
+
+    # ── Zaman Bazlı Verimlilik ────────────────────────────────────────────────
+    if "gunluk_islem" in eff:
+        st.markdown("#### ⏱ Zaman Bazlı Verimlilik Göstergeleri")
+        tc1, tc2, tc3 = st.columns(3)
+        tc1.metric("📅 Günlük Ort. İşlem",     f"{eff['gunluk_islem']:.1f}")
+        tc2.metric("🌙 Mesai Dışı İşlem",      f"%{eff.get('mesai_disi_pct',0):.1f}",
+                   delta="Yüksek Risk" if eff.get("mesai_disi_pct",0) > 5 else "Normal",
+                   delta_color="inverse" if eff.get("mesai_disi_pct",0) > 5 else "normal")
+        tc3.metric("📅 Hafta Sonu İşlem",      f"%{eff.get('haftasonu_pct',0):.1f}",
+                   delta="Yüksek Risk" if eff.get("haftasonu_pct",0) > 5 else "Normal",
+                   delta_color="inverse" if eff.get("haftasonu_pct",0) > 5 else "normal")
+        st.divider()
+
+    # ── Tutar Dağılım Analizi ─────────────────────────────────────────────────
+    if "ort_tutar" in eff:
+        st.markdown("#### 💰 Finansal İşlem Kalitesi")
+        fc1, fc2, fc3, fc4 = st.columns(4)
+        fc1.metric("Toplam Tutar",  f"{eff['toplam_tutar']:,.0f}")
+        fc2.metric("Ortalama",      f"{eff['ort_tutar']:,.0f}")
+        fc3.metric("Std. Sapma",    f"{eff['std_tutar']:,.0f}")
+        fc4.metric("Varyasyon Katsayısı", f"%{eff['cv_tutar']:.1f}",
+                   help="CV > 150% ise işlem tutarları aşırı heterojen — anomali riski yüksek")
+
+        if "amount" in col_map:
+            try:
+                amt = _to_numeric_safe(df, col_map["amount"]).dropna()
+                fig_hist = px.histogram(
+                    amt[amt > 0], nbins=50,
+                    title="Pozitif Tutar Dağılımı (log ekseni)",
+                    log_y=True,
+                    color_discrete_sequence=["#4f9cf9"],
+                )
+                fig_hist.update_layout(**{**PLOT_LAYOUT, "height": 300})
+                st.plotly_chart(fig_hist, use_container_width=True)
+            except Exception:
+                pass
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# M18 – YILLIK RİSK BAZLI DENETİM PLANLAYICI
+# ══════════════════════════════════════════════════════════════════════════════
+# İlandan: "Yıllık risk bazlı denetim planı doğrultusunda … iç denetim
+#            faaliyetlerini gerçekleştirmek"
+# ─────────────────────────────────────────────────────────────────────────────
+
+_AUDIT_AREAS = [
+    ("Satınalma & Tedarik",   "Tedarikçi onay, sözleşme yönetimi, fiyat karşılaştırması"),
+    ("Finans & Muhasebe",     "Finansal raporlama, dönem kapanışı, mutabakat"),
+    ("İnsan Kaynakları",      "Bordro, performans değerlendirme, işe alım prosedürleri"),
+    ("Bilgi Teknolojileri",   "Erişim yönetimi, yedekleme, felaket kurtarma planı"),
+    ("Operasyonlar",          "Üretim/hizmet kalitesi, verimlilik, kapasite kullanımı"),
+    ("Hukuk & Uyum",          "Mevzuat takibi, sözleşme yükümlülükleri, lisans yönetimi"),
+    ("Pazarlama & Satış",     "Hedef uyumu, müşteri verisi yönetimi, indirim politikaları"),
+    ("İç Kontrol",            "Kontrol tasarım etkinliği, uygulama testi, boşluk analizi"),
+]
+
+_AUDIT_MONTHS = [
+    "Ocak","Şubat","Mart","Nisan","Mayıs","Haziran",
+    "Temmuz","Ağustos","Eylül","Ekim","Kasım","Aralık"
+]
+
+
+def generate_audit_plan(findings: list, grc_results: list) -> list[dict]:
+    """
+    Bulgular ve GRC uyum durumuna göre yıllık denetim planı önerir.
+    Her alan için tahmini ay, öncelik ve tahmini gün sayısı döndürür.
+    """
+    # Uyumsuz/kısmen uyumlu GRC alanlarına öncelik ver
+    grc_risk = {g["alan"]: g["risk"] for g in grc_results}
+    prio_map = {"Kritik": 0, "Yüksek": 1, "Orta": 2, "Düşük": 3}
+
+    # Bulgulardan alan etiketleri çıkar
+    finding_alan_risk: dict[str, str] = {}
+    for f in findings:
+        kat = f.get("kategori", "")
+        risk = f.get("risk", "Düşük")
+        finding_alan_risk[kat] = min(
+            [finding_alan_risk.get(kat, "Düşük"), risk],
+            key=lambda r: prio_map.get(r, 4)
+        )
+
+    plan = []
+    scheduled_months = []
+    month_counter = 1
+
+    for alan, kapsam in _AUDIT_AREAS:
+        # Alan riski: GRC + bulgulardan maksimum
+        alan_risk_vals = []
+        for gk, gr in grc_risk.items():
+            if any(w in alan.lower() for w in gk.lower().split()):
+                alan_risk_vals.append(gr)
+        for fk, fr in finding_alan_risk.items():
+            if any(w in alan.lower() for w in fk.lower().split()):
+                alan_risk_vals.append(fr)
+
+        if alan_risk_vals:
+            alan_riski = min(alan_risk_vals, key=lambda r: prio_map.get(r, 4))
+        else:
+            alan_riski = "Düşük"
+
+        # Öncelik & süre
+        if alan_riski == "Kritik":
+            oncelik, gun = "P1 – Acil", 10
+        elif alan_riski == "Yüksek":
+            oncelik, gun = "P2 – Yüksek", 7
+        elif alan_riski == "Orta":
+            oncelik, gun = "P3 – Orta", 5
+        else:
+            oncelik, gun = "P4 – Rutin", 3
+
+        # Ay ataması (P1'ler önce)
+        ay_idx = min(month_counter - 1, 11)
+        ay = _AUDIT_MONTHS[ay_idx]
+        if alan_riski in ("Kritik", "Yüksek"):
+            ay = _AUDIT_MONTHS[min(ay_idx, 5)]  # İlk yarıyıl
+        month_counter += 1
+
+        plan.append({
+            "alan":     alan,
+            "kapsam":   kapsam,
+            "oncelik":  oncelik,
+            "risk":     alan_riski,
+            "ay":       ay,
+            "gun":      gun,
+            "durum":    "Planlandı",
+        })
+
+    # P1 → P4 sıralama
+    plan.sort(key=lambda x: prio_map.get(x["risk"], 4))
+
+    # Ay yeniden ata (sıralı)
+    for i, p in enumerate(plan):
+        p["ay"] = _AUDIT_MONTHS[min(i, 11)]
+
+    return plan
+
+
+def render_audit_plan_tab(audit_plan: list):
+    """Yıllık Denetim Planı sekmesini render eder."""
+    st.markdown("""
+    <div class="sec-header">
+      <div class="sec-icon">📅</div>
+      <div>
+        <div class="sec-title">Yıllık Risk Bazlı Denetim Planı</div>
+        <div class="sec-subtitle">IIA Std. 2010 uyumlu · Risk öncelikli denetim takvimi · Kaynak planlaması</div>
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    if not audit_plan:
+        st.info("Denetim planı oluşturulamadı.")
+        return
+
+    # ── Özet KPI ──────────────────────────────────────────────────────────────
+    toplam_gun = sum(p["gun"] for p in audit_plan)
+    p1_n = sum(1 for p in audit_plan if "P1" in p["oncelik"])
+    p2_n = sum(1 for p in audit_plan if "P2" in p["oncelik"])
+    yil  = datetime.now().year
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("📋 Toplam Denetim Alanı", len(audit_plan))
+    c2.metric("🚨 P1 – Acil Alan",       p1_n)
+    c3.metric("⚠️ P2 – Yüksek Alan",    p2_n)
+    c4.metric("⏱ Toplam Tahmini Gün",   toplam_gun)
+
+    st.divider()
+
+    # ── Gantt / Takvim Görünümü ───────────────────────────────────────────────
+    st.markdown(f"#### 📅 {yil} Denetim Takvimi (Gantt)")
+
+    gantt_data = []
+    for p in audit_plan:
+        ay_idx = _AUDIT_MONTHS.index(p["ay"])
+        start  = datetime(yil, ay_idx + 1, 1)
+        end    = start + timedelta(days=p["gun"])
+        color  = {"Kritik":"#e03e3e","Yüksek":"#d97706","Orta":"#2563eb","Düşük":"#059669"}.get(p["risk"],"#4f9cf9")
+        gantt_data.append({
+            "Alan": p["alan"], "Başlangıç": start, "Bitiş": end,
+            "Risk": p["risk"], "Gün": p["gun"], "Color": color,
+        })
+
+    fig_gantt = go.Figure()
+    for i, row in enumerate(gantt_data):
+        fig_gantt.add_trace(go.Bar(
+            x=[(row["Bitiş"] - row["Başlangıç"]).days],
+            y=[row["Alan"]],
+            base=[(row["Başlangıç"] - datetime(yil, 1, 1)).days],
+            orientation="h",
+            marker_color=row["Color"],
+            name=row["Risk"],
+            text=f"{row['Gün']} gün",
+            textposition="inside",
+            showlegend=(i < 4),
+            hovertemplate=(
+                f"<b>{row['Alan']}</b><br>"
+                f"Başlangıç: {row['Başlangıç'].strftime('%d %B')}<br>"
+                f"Süre: {row['Gün']} gün<br>"
+                f"Risk: {row['Risk']}<extra></extra>"
+            ),
+        ))
+
+    # X ekseni ay etiketleri
+    month_positions = [(datetime(yil, m, 1) - datetime(yil, 1, 1)).days for m in range(1, 13)]
+    fig_gantt.update_layout(
+        **PLOT_LAYOUT,
+        height=400,
+        title=f"{yil} Risk Bazlı Denetim Takvimi",
+        xaxis=dict(
+            tickvals=month_positions,
+            ticktext=_AUDIT_MONTHS,
+            gridcolor="#1c2e44",
+        ),
+        barmode="overlay",
+    )
+    st.plotly_chart(fig_gantt, use_container_width=True)
+
+    st.divider()
+
+    # ── Detay Tablo ───────────────────────────────────────────────────────────
+    st.markdown("#### 📋 Denetim Planı Detayı")
+
+    # Kullanıcı durum güncellemesi
+    if "audit_plan_durum" not in st.session_state:
+        st.session_state["audit_plan_durum"] = {
+            p["alan"]: "Planlandı" for p in audit_plan
+        }
+
+    plan_df_rows = []
+    for p in audit_plan:
+        plan_df_rows.append({
+            "Alan":     p["alan"],
+            "Kapsam":   p["kapsam"],
+            "Öncelik":  p["oncelik"],
+            "Risk":     p["risk"],
+            "Takvim":   p["ay"],
+            "Tahmini Gün": p["gun"],
+            "Durum":    st.session_state["audit_plan_durum"].get(p["alan"], "Planlandı"),
+        })
+    plan_df = pd.DataFrame(plan_df_rows)
+    st.dataframe(plan_df, use_container_width=True, hide_index=True)
+
+    st.divider()
+
+    # ── Alan Durum Güncelleme ─────────────────────────────────────────────────
+    st.markdown("#### ✏️ Denetim Durumu Güncelle")
+    for p in audit_plan[:4]:  # İlk 4 (P1-P2) göster
+        col_p1, col_p2 = st.columns([3, 1])
+        with col_p1:
+            st.markdown(f"**{p['alan']}** — _{p['oncelik']}_ · {p['ay']} · {p['gun']} gün")
+        with col_p2:
+            mevcut = st.session_state["audit_plan_durum"].get(p["alan"], "Planlandı")
+            yeni = st.selectbox(
+                "Durum",
+                ["Planlandı", "Devam Ediyor", "Tamamlandı", "Ertelendi"],
+                index=["Planlandı","Devam Ediyor","Tamamlandı","Ertelendi"].index(mevcut),
+                key=f"aplan_{p['alan']}",
+                label_visibility="collapsed",
+            )
+            st.session_state["audit_plan_durum"][p["alan"]] = yeni
+
+    # ── Kaynak Dağılımı ───────────────────────────────────────────────────────
+    st.divider()
+    st.markdown("#### 📊 Ay Bazlı Kaynak Dağılımı")
+    ay_gun: dict[str, int] = {}
+    for p in audit_plan:
+        ay_gun[p["ay"]] = ay_gun.get(p["ay"], 0) + p["gun"]
+
+    ay_sira = {a: i for i, a in enumerate(_AUDIT_MONTHS)}
+    ay_gun_sorted = dict(sorted(ay_gun.items(), key=lambda x: ay_sira.get(x[0], 99)))
+
+    fig_ay = go.Figure(go.Bar(
+        x=list(ay_gun_sorted.keys()),
+        y=list(ay_gun_sorted.values()),
+        marker_color="#4f9cf9",
+        text=list(ay_gun_sorted.values()),
+        textposition="outside",
+    ))
+    fig_ay.update_layout(**{**PLOT_LAYOUT, "height": 300,
+                            "title": "Aylık Toplam Denetim Günü"})
+    st.plotly_chart(fig_ay, use_container_width=True)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # M14 – SIDEBAR & FİLTRELER
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -3245,6 +3926,9 @@ def main() -> None:
         pareto    = run_pareto_analysis(df_scored, col_map)
         findings  = generate_findings(quality, scenarios, df_scored, benford, pareto)
         plans     = generate_action_plans(findings)
+        grc_results  = run_grc_assessment(findings, scenarios, quality, df_scored)
+        eff_metrics  = compute_operational_efficiency(df_scored, col_map, quality, scenarios)
+        audit_plan   = generate_audit_plan(findings, grc_results)
 
     # ── Sidebar ──────────────────────────────────────────────────────────────
     filters  = render_sidebar(df_scored, col_map)
@@ -3297,9 +3981,12 @@ def main() -> None:
         "🎯 Denetim Senaryoları",
         "🔎 Bulgular",
         "✅ Aksiyon Planları",
+        "🛡️ GRC Uyum",
+        "⚙️ Operasyonel Verimlilik",
+        "📅 Denetim Planı",
         "📌 Yönetici Özeti",
     ])
-    t_data, t_risk, t_benford, t_scenario, t_findings, t_actions, t_exec = tabs
+    t_data, t_risk, t_benford, t_scenario, t_findings, t_actions, t_grc, t_eff, t_plan, t_exec = tabs
 
     # ══════════════════════════════════════════════════════
     # TAB 1 – VERİ GENEL GÖRÜNÜM
@@ -3756,7 +4443,25 @@ def main() -> None:
                 st.dataframe(pd.DataFrame(summary_rows), use_container_width=True)
 
     # ══════════════════════════════════════════════════════
-    # TAB 7 – YÖNETİCİ ÖZETİ
+    # TAB 7 – GRC UYUM
+    # ══════════════════════════════════════════════════════
+    with t_grc:
+        render_grc_tab(grc_results, findings, df_f)
+
+    # ══════════════════════════════════════════════════════
+    # TAB 8 – OPERASYONELVERİMLİLİK
+    # ══════════════════════════════════════════════════════
+    with t_eff:
+        render_efficiency_tab(eff_metrics, df_f, col_map)
+
+    # ══════════════════════════════════════════════════════
+    # TAB 9 – DENETİM PLANI
+    # ══════════════════════════════════════════════════════
+    with t_plan:
+        render_audit_plan_tab(audit_plan)
+
+    # ══════════════════════════════════════════════════════
+    # TAB 10 – YÖNETİCİ ÖZETİ
     # ══════════════════════════════════════════════════════
     with t_exec:
         render_executive_summary(df_f, col_map, findings, scenarios, quality, plans)
