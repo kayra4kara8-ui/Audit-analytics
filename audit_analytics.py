@@ -3484,14 +3484,17 @@ def render_audit_plan_tab(audit_plan: list):
 
     # X ekseni ay etiketleri
     month_positions = [(datetime(yil, m, 1) - datetime(yil, 1, 1)).days for m in range(1, 13)]
+    gantt_layout = {k: v for k, v in PLOT_LAYOUT.items() if k != "xaxis"}
     fig_gantt.update_layout(
-        **PLOT_LAYOUT,
+        **gantt_layout,
         height=400,
         title=f"{yil} Risk Bazlı Denetim Takvimi",
         xaxis=dict(
             tickvals=month_positions,
             ticktext=_AUDIT_MONTHS,
             gridcolor="#1c2e44",
+            zerolinecolor="#1c2e44",
+            linecolor="#1c2e44",
         ),
         barmode="overlay",
     )
